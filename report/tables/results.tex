@@ -1,0 +1,23 @@
+\begin{tabular}{lrrrrrrr}
+\toprule
+ & Rank IC & \multicolumn{2}{c}{Top decile} & H--L & Turnover & \multicolumn{2}{c}{Excl.\ bottom 30\%} \\
+\cmidrule(lr){3-4}\cmidrule(lr){7-8}
+Model & (NW $t$) & Avg \% & SR & SR & \% & Avg \% & SR \\
+\midrule
+\multicolumn{8}{l}{\emph{Two-stage MSE, paper's architectures}} \\
+Linear (paper) & 0.067 (21.2) & 31.1 & 1.36 & 5.58 & 32 & 22.8 & 1.03 \\
+NN1 & 0.062 (21.6) & 31.7 & 1.35 & 6.61 & 28 & 20.7 & 0.91 \\
+NN2 & 0.063 (21.9) & 29.6 & 1.26 & 6.51 & 30 & 18.4 & 0.81 \\
+NN3 & 0.061 (20.6) & 29.0 & 1.23 & 6.33 & 28 & 18.1 & 0.80 \\
+NN4 & 0.063 (21.5) & 30.5 & 1.29 & 6.67 & 29 & 18.7 & 0.82 \\
+NN5 & 0.060 (20.3) & 26.7 & 1.13 & 5.90 & 27 & 16.2 & 0.71 \\
+\multicolumn{8}{l}{\emph{Two-stage, closed-form linear family (ours)}} \\
+OLS (closed form) & 0.066 (20.5) & 31.0 & 1.35 & 5.35 & 33 & 22.2 & 1.00 \\
+Ridge & 0.069 (20.1) & 27.8 & 1.23 & 4.85 & 31 & 19.5 & 0.89 \\
+Ridge-rank & 0.077 (23.9) & 26.8 & 1.20 & 5.28 & 39 & 20.1 & 0.93 \\
+PCR & 0.065 (19.8) & 24.6 & 1.09 & 4.42 & 33 & 17.4 & 0.79 \\
+PLS & 0.071 (21.3) & 28.7 & 1.28 & 4.94 & 28 & 19.8 & 0.92 \\
+LDA & 0.073 (21.4) & 27.4 & 1.20 & 4.83 & 34 & 20.5 & 0.92 \\
+LDA-top & 0.061 (16.2) & 13.0 & 0.65 & 2.95 & 17 & 8.4 & 0.43 \\
+\bottomrule
+\end{tabular}

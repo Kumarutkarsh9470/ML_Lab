@@ -1,0 +1,15 @@
+torch>=2.2
+numpy
+pandas>=2.0
+pyarrow
+scipy
+scikit-learn
+statsmodels
+matplotlib
+nbformat
+nbconvert
+ipykernel
+# optional: the US (WRDS) version of the panel
+wrds
+openassetpricing
+polars
