@@ -1,18 +1,4 @@
-"""Linear models and linear dimension reduction, fit in closed form from sufficient statistics.
-
-Every model here predicts with one coefficient vector, yhat = x'beta + b, so all of them can be fit from a
-window's sums (n, sum x, X'X, X'y and per-class sums), accumulated on the GPU in one pass over the int8
-features. That makes the whole family cheap enough to run on every window with a hyperparameter grid.
-
-Families (hyperparameters are chosen per window on the validation set):
-    OLS          least squares (a tiny ridge keeps the industry dummies well conditioned)
-    Ridge        L2 penalty, relative to the average feature variance
-    Ridge-rank   ridge on the within-day rank of the return, rescaled to return units on the training set
-    PCR          regression on the top-K principal components of the numeric features, plus industry dummies
-    PLS          partial least squares (SIMPLS) with K components
-    LDA          regression on the top-m Linear Discriminant Analysis directions separating return deciles
-    LDA-top      Fisher discriminant for "top decile vs the rest", rescaled to return units
-"""
+"""Linear models and linear dimension reduction, fit in closed form from sufficient statistics."""
 import time
 from pathlib import Path
 
@@ -41,7 +27,7 @@ def day_targets(df, winsor=(0.005, 0.995)):
     g = df.groupby("date")["target"]
     q = g.quantile(list(winsor)).unstack()
     y = df["target"].clip(df["date"].map(q[winsor[0]]), df["date"].map(q[winsor[1]]))
-    pct = g.rank(method="first", pct=True)  # in (0, 1]
+    pct = g.rank(method="first", pct=True)
     cls = (np.ceil(pct * N_CLASSES) - 1).clip(0, N_CLASSES - 1)
     return y.to_numpy(np.float64), (2 * pct - 1).to_numpy(np.float64), cls.to_numpy(np.int64)
 
@@ -170,7 +156,6 @@ def daily_scores(df, preds, y, rank):
     P = pd.DataFrame(preds, index=df.index)
     d = df["date"]
     pr = P.groupby(d).rank(pct=True)
-    # daily Pearson correlation of prediction ranks with return ranks
     a = pr.sub(pr.groupby(d).transform("mean"))
     b = pd.Series(rank, index=df.index)
     b = b - b.groupby(d).transform("mean")
@@ -182,12 +167,7 @@ def daily_scores(df, preds, y, rank):
 
 def run_linear(panel_dir, windows, out_dir, families=None, criterion="ic", features=None, embargo=2,
                device=None, verbose=True):
-    """Fit every family on every window, choose each family's hyperparameters on validation, save test predictions.
-
-    Writes out_dir/<family>/<window>.parquet (same format as mlm.train.run_rolling), the chosen coefficients
-    (<window>_beta.npy) and out_dir/linear_grid.csv with the validation metrics of every setting tried.
-    criterion: "ic" (mean daily rank correlation, default), "mse" or "top" (mean top-decile return).
-    """
+    """Fit every family on every window, choose each family's hyperparameters on validation, save test predictions."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(out_dir)
     features = features or panel_features(panel_dir)
@@ -236,7 +216,7 @@ def run_linear(panel_dir, windows, out_dir, families=None, criterion="ic", featu
             np.save(out_dir / fam / f"{w['name']}_beta.npy", np.r_[b0[best], B[:, best]])
         scores.to_csv(grid_path, mode="a", header=not grid_path.exists(), index=False)
         if verbose:
-            ch = scores[scores["chosen"] == True]  # noqa: E712
+            ch = scores[scores["chosen"] == True]
             print(f"{w['name']}: {len(tr):,} train rows, stats {t_fit - t0:.0f}s, total {time.time() - t0:.0f}s | "
                   + ", ".join(f"{r.family} {r.params} ic={r.ic:.4f}" for r in ch.itertuples()))
     return pd.read_csv(grid_path) if grid_path.exists() else None

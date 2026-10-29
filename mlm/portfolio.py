@@ -6,14 +6,10 @@ GROUPS = ["High(H)"] + [str(k) for k in range(2, 10)] + ["Low(L)"]
 
 
 def decile_returns(pred, weight="ew", n_groups=10):
-    """Daily returns of portfolios sorted into deciles on the prediction, highest (H) first.
-
-    H-L is (H - L) / 2, a long-short portfolio with unit gross exposure. That is the convention
-    Table 2 implies: for the linear MSE model, (34.2 + 59.5) / 2 = 46.9.
-    """
+    """Daily returns of portfolios sorted into deciles on the prediction, highest (H) first."""
     df = pred[["date", "pred", "target", "me"]].copy()
     pct = df.groupby("date")["pred"].rank(method="first", pct=True)
-    df["g"] = n_groups + 1 - np.ceil(pct * n_groups).clip(1, n_groups).astype(int)  # 1 = highest
+    df["g"] = n_groups + 1 - np.ceil(pct * n_groups).clip(1, n_groups).astype(int)
     if weight == "ew":
         out = df.groupby(["date", "g"])["target"].mean().unstack()
     else:
@@ -21,26 +17,18 @@ def decile_returns(pred, weight="ew", n_groups=10):
         s = df.groupby(["date", "g"])[["wr", "me"]].sum()
         out = (s["wr"] / s["me"]).unstack()
     out.columns = GROUPS
-    out["H-L"] = (out["High(H)"] - out["Low(L)"]) / 2   # the paper's convention (unit gross exposure)
-    out["H-L raw"] = out["High(H)"] - out["Low(L)"]     # long H, short L, $1 each (PAPER_ISSUES.md A7)
+    out["H-L"] = (out["High(H)"] - out["Low(L)"]) / 2
+    out["H-L raw"] = out["High(H)"] - out["Low(L)"]
     return out
 
 
 def solve_tc_lp(rhat, p, u, gamma):
-    """Exact solution of the long-only top-decile problem with a turnover penalty (eq. 19):
-
-        max_w  rhat'w - gamma/2 * ||w - p||_1   s.t.  sum(w) = 1,  0 <= w <= u.
-
-    The objective is separable and concave piecewise linear in each w_i, so with a single budget
-    constraint the problem is a fractional knapsack: keeping held weight (up to p_i) is worth
-    rhat_i + gamma/2, and buying more (up to u) is worth rhat_i - gamma/2. Filling the most valuable
-    pieces first is optimal. With gamma = 0 this gives 1/(10%·N) to the top 10% of stocks.
-    """
+    """Exact solution of the long-only top-decile problem with a turnover penalty (eq. 19)."""
     n = len(rhat)
     hold = np.minimum(p, u)
     lens = np.concatenate([hold, u - hold])
     slopes = np.concatenate([rhat + gamma / 2, rhat - gamma / 2])
-    order = np.argsort(-slopes, kind="stable")  # for ties, an asset's "keep" piece comes before its "buy" piece
+    order = np.argsort(-slopes, kind="stable")
     cum = np.cumsum(lens[order])
     k = int(np.searchsorted(cum, 1.0 - 1e-12))
     take = np.zeros(2 * n)
@@ -59,19 +47,12 @@ def _align(perm, prev):
 
 
 def _turnover(w, p, dropped):
-    """One-sided turnover, 0.5 * ||w_t - w_{t-1}||_1. The cost gamma/2 * ||.||_1 in eq. (19) equals gamma * this."""
+    """One-sided turnover, 0.5 * ||w_t - w_{t-1}||_1."""
     return 0.5 * (np.abs(w - p).sum() + dropped)
 
 
 def top_portfolio(pred, gamma=0.0, optimize=False, top_frac=0.1, kappa=None):
-    """Daily long-only top-decile portfolio with transaction costs at rate gamma (a fraction, e.g. 0.002 = 20 bps).
-
-    optimize=False is MSE-Top: hold the raw top decile and pay the costs.
-    optimize=True is MSE-Opt: solve eq. (19) each day, given yesterday's weights.
-    kappa (a scalar, or a Series indexed by date) scales the cost rate used inside the optimization only,
-    for the tuned MSE-Opt benchmark; realized costs are always charged at gamma.
-    Columns: gross and net returns, portfolio turnover (TO-P) and raw-signal turnover (TO-S).
-    """
+    """Daily long-only top-decile portfolio with transaction costs at rate gamma (a fraction, e.g. 0.002 = 20 bps)."""
     df = pred.sort_values(["date", "permno"])
     dates, start = np.unique(df["date"].to_numpy(), return_index=True)
     stop = np.append(start[1:], len(df))
@@ -100,15 +81,10 @@ KAPPAS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 
 
 def tuned_kappa(test_pred, val_pred, windows, gamma, kappas=KAPPAS):
-    """Tuned MSE-Opt (PAPER_ISSUES.md D2): per window, the cost multiplier kappa with the best validation net return.
-
-    MSE forecasts are shrunk toward zero, so feeding them into eq. (19) as they are under-reacts or over-reacts
-    to costs; a practitioner would tune the trade-off. Only validation data is used for the choice. Returns
-    a Series of kappa by test date and the per-window choices.
-    """
+    """Tuned MSE-Opt: per window, the cost multiplier kappa with the best validation net return."""
     chosen, by_date = {}, {}
     for w in windows:
-        v = val_pred[val_pred["window"] == w["name"]]  # this window's own validation predictions
+        v = val_pred[val_pred["window"] == w["name"]]
         t = test_pred[(test_pred.date >= w["test_start"]) & (test_pred.date <= w["test_end"])]
         if v.empty or t.empty:
             continue

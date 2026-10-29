@@ -1,18 +1,4 @@
-"""Dimension reduction in front of any prediction model, for two-stage (MSE) and E2E training.
-
-A model "KIND<k>-HEAD" first maps the numeric characteristics to k components and then applies HEAD
-(Linear or NN1-NN5) to [components, industry dummies]. The projection is fit on each window's training
-data only:
-
-    PCA  top-k eigenvectors of the characteristic covariance (unsupervised)
-    PLS  SIMPLS weight vectors (supervised by covariance with returns)
-    LDA  top-k Linear Discriminant Analysis directions separating each day's return deciles
-    SFA  the k slowest directions (persistence-aware): smallest eigenvalues of C_delta v = lambda C v, where
-         C_delta is the covariance of day-to-day changes. Slow components imply low signal turnover.
-
-Each component is scaled to unit variance on the training data. With learnable=True the projection W is a
-parameter, kept near its starting value by the penalty ||W - W0||^2 / ||W0||^2 (decision-aware PCA under E2E).
-"""
+"""Dimension reduction in front of any prediction model, for two-stage (MSE) and E2E training."""
 import json
 import time
 from pathlib import Path
@@ -39,7 +25,7 @@ def persistence_cov(df, X, num, device, chunk=250_000):
     order, num_t = torch.from_numpy(order), torch.from_numpy(num).to(device)
     S = torch.zeros(len(num), len(num), dtype=torch.float64, device=device)
     n = 0
-    for s in range(0, len(order) - 1, chunk):  # gather rows chunk by chunk: a full reordered copy is ~1 GB
+    for s in range(0, len(order) - 1, chunk):
         e = min(s + chunk + 1, len(order))
         x = X[order[s:e]].to(device)[:, num_t].float().mul_(1.0 / Q)
         d = (x[1:] - x[:-1])[same[s:e - 1].to(device)]
@@ -58,7 +44,7 @@ def directions(kind, k, st, num, C_delta=None, alpha=0.2):
         P = len(num)
         R, s = np.zeros((P, k)), c[num].copy()
         V = np.zeros((P, k))
-        for a in range(k):  # SIMPLS weight vectors on the numeric block
+        for a in range(k):
             r = s / np.sqrt(s @ Cn @ s)
             p = Cn @ r
             v = p - V[:, :a] @ (V[:, :a].T @ p)
@@ -70,7 +56,7 @@ def directions(kind, k, st, num, C_delta=None, alpha=0.2):
         T = _lda_directions(st, num, alpha)[0][:, :k]
     elif kind == "SFA":
         reg = 1e-6 * np.trace(Cn) / len(Cn) * np.eye(len(Cn))
-        T = sla.eigh(C_delta + reg, Cn + reg)[1][:, :k]  # smallest ratio of change variance to level variance
+        T = sla.eigh(C_delta + reg, Cn + reg)[1][:, :k]
     else:
         raise ValueError(kind)
     T = T / np.sqrt(np.einsum("ik,ij,jk->k", T, Cn, T))[None, :]

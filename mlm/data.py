@@ -1,11 +1,4 @@
-"""Panel storage, rolling windows, and a synthetic panel for testing the pipeline.
-
-A panel is one parquet file per year plus meta.json. Each row is a (date, permno) pair in the
-investable universe with:
-    me      market cap at the close of `date` ($ millions)
-    target  market-adjusted return earned by a position chosen with information up to `date`
-    f_*     characteristics, as cross-sectional ranks in [-1, 1] stored as int8 (value * 127)
-"""
+"""Panel storage, rolling windows, and a synthetic panel for testing the pipeline."""
 import json
 from pathlib import Path
 
@@ -13,14 +6,11 @@ import numpy as np
 import pandas as pd
 
 ID_COLS = ["date", "permno", "me", "target"]
-Q = 127  # int8 scale for ranked features
+Q = 127
 
 
 def rank_quantize(df, cols, by="date", chunk=40):
-    """Cross-sectional rank of each column mapped to [-1, 1]; missing values become 0 (the median).
-
-    Columns are processed `chunk` at a time to bound the memory of the float64 temporaries.
-    """
+    """Cross-sectional rank of each column mapped to [-1, 1]; missing values become 0 (the median)."""
     g = df.groupby(by)
     parts = []
     for s in range(0, len(cols), chunk):
@@ -75,11 +65,7 @@ def rolling_windows(first_test, last_test, train_months=39, val_months=9, test_m
 
 
 def split_window(df, w, embargo=2):
-    """Train/validation/test rows for one window.
-
-    The last `embargo` trading days before each boundary are dropped: their labels are returns
-    realized after the boundary, so keeping them would leak future data into training.
-    """
+    """Train/validation/test rows for one window."""
     d = df["date"]
     tr = df[(d >= w["train_start"]) & (d < w["val_start"])]
     va = df[(d >= w["val_start"]) & (d < w["test_start"])]
@@ -91,12 +77,7 @@ def split_window(df, w, embargo=2):
 
 
 def make_synthetic_panel(panel_dir, start="2010-01-01", end="2016-12-31", n_stocks=600, seed=0):
-    """Simulated panel in the same format as the CRSP build, for testing the pipeline end to end.
-
-    Expected returns are nonlinear and differ by firm size, echoing the four-asset example in
-    Section 3.1: large caps load mainly on f_value, small caps on f_growth. f_rev is a fast-moving
-    (high-turnover) signal, and f_noise* carry no information.
-    """
+    """Simulated panel in the same format as the real one, for testing the pipeline end to end."""
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range(start, end)
     T, N = len(dates), n_stocks
@@ -125,10 +106,10 @@ def make_synthetic_panel(panel_dir, start="2010-01-01", end="2016-12-31", n_stoc
         **{n: f[k].ravel() for k, n in enumerate(names)},
         "f_size": lme.ravel(),
     })
-    df = df[rng.random(len(df)) > 0.03].reset_index(drop=True)  # stocks occasionally missing from the universe
+    df = df[rng.random(len(df)) > 0.03].reset_index(drop=True)
     features = names + ["f_size"]
     for c in features:
-        df.loc[rng.random(len(df)) < 0.05, c] = np.nan  # missing characteristics
+        df.loc[rng.random(len(df)) < 0.05, c] = np.nan
     df[features] = rank_quantize(df, features)
     for y, g in df.groupby(df["date"].dt.year):
         write_panel_year(g, panel_dir, y, features)

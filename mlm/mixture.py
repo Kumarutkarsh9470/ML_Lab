@@ -1,12 +1,4 @@
-"""Mixture of linear experts with a GMM gate (two-stage closed form, and a module reusable by E2E).
-
-    g(x) = sum_k pi_k(x) (x' beta_k + b_k),   pi_k(x) = GMM posterior of z = (x_num - mu) V
-
-The GMM is fit on the top principal-component scores z of a training subsample; each expert is a ridge
-regression weighted by its gate, fit in closed form from weighted sufficient statistics. This mirrors the
-paper's four-asset example, where large and small firms follow different pricing rules. "Size-Experts"
-replaces the GMM gate by hard size terciles, as a check that the GMM adds something.
-"""
+"""Mixture of linear experts with a GMM gate (two-stage closed form, and a module reusable by E2E)."""
 import time
 from pathlib import Path
 
@@ -38,16 +30,15 @@ class MixtureExperts(nn.Module):
         self.size_col = size_col
         if size_edges is not None:
             self.register_buffer("size_edges", torch.as_tensor(size_edges, dtype=torch.float32))
-        self.beta = nn.Parameter(torch.as_tensor(betas, dtype=torch.float32))  # K x P
-        self.b0 = nn.Parameter(torch.as_tensor(b0, dtype=torch.float32))      # K
+        self.beta = nn.Parameter(torch.as_tensor(betas, dtype=torch.float32))
+        self.b0 = nn.Parameter(torch.as_tensor(b0, dtype=torch.float32))
 
     def gate(self, x):
-        if self.size_col is not None:  # hard size terciles
+        if self.size_col is not None:
             s = x[:, self.size_col].contiguous()
             k = torch.bucketize(s, self.size_edges)
             return torch.nn.functional.one_hot(k, self.beta.shape[0]).float()
         z = (x[:, self.num] - self.mu) @ self.V
-        # log N(z | m_k, S_k) up to a constant, with S_k^-1 = L_k L_k'
         y = torch.einsum("nd,kde->nke", z, self.prec_chol) - torch.einsum("kd,kde->ke", self.means, self.prec_chol)[None]
         logdet = torch.log(torch.diagonal(self.prec_chol, dim1=1, dim2=2)).sum(1)
         logp = self.log_w + logdet - 0.5 * (y ** 2).sum(2)
@@ -176,6 +167,6 @@ def run_mixture(panel_dir, windows, out_dir, families=None, n_pc=10, sample=200_
             torch.save({"state": mod.cpu().state_dict(), "k": mod.beta.shape[0], "size_col": mod.size_col}, d / f"{w['name']}.pt")
         grid.to_csv(grid_path, mode="a", header=not grid_path.exists(), index=False)
         if verbose:
-            ch = grid[grid.chosen == True]  # noqa: E712
+            ch = grid[grid.chosen == True]
             print(f"{w['name']}: {time.time() - t0:.0f}s | " + ", ".join(f"{r.family} {r.params} ic={r.ic:.4f}" for r in ch.itertuples()))
     return pd.read_csv(grid_path) if grid_path.exists() else None

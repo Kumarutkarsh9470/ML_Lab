@@ -1,29 +1,16 @@
-# data and model outputs (large; rebuilt by the notebooks, see README)
 data/
 data_synth/
 preds/
 *.parquet
 *.pt
 *.npy
-
-# local results for the synthetic test panel
 results/synthetic/
 figures/synthetic/
-
-# Python
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 .venv/
 venv/
-
-# LaTeX build files
-report/*.aux
-report/*.log
-report/*.out
-report/*.synctex.gz
-
-# editors and OS
 .vscode/
 .idea/
 .DS_Store

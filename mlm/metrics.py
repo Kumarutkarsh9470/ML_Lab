@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-ANN = 252  # trading days per year; set from the panel's meta.json (about 242 for A-shares, as in the paper)
+ANN = 252
 
 
 def oos_r2(pred, target):
@@ -21,11 +21,7 @@ def perf(r, ann=None):
 
 
 def drawdown(r):
-    """Largest one-day loss and maximum drawdown of the cumulative sum of daily returns.
-
-    The paper uses cumulative sums (Table 3 reports drawdowns above 100%), and its Length column
-    counts calendar days from peak to trough, inclusive (2015-06-19 to 2015-07-06 gives 18).
-    """
+    """Largest one-day loss and maximum drawdown of the cumulative sum of daily returns."""
     r = r.dropna()
     cum = r.cumsum()
     dd = cum.cummax() - cum
@@ -43,11 +39,7 @@ def nw_tstat(x):
 
 
 def nw_test(x):
-    """Newey-West t-statistic with one-sided (mean > 0) and two-sided p-values.
-
-    The paper marks t = 1.74 as significant at 5%, which holds only one-sided (PAPER_ISSUES.md C5); we
-    report both and call a difference significant only when the two-sided test agrees.
-    """
+    """Newey-West t-statistic with one-sided (mean > 0) and two-sided p-values."""
     from scipy.stats import norm
     t = nw_tstat(x)
     return pd.Series({"t": t, "p one-sided": 1 - norm.cdf(t), "p two-sided": 2 * (1 - norm.cdf(abs(t)))})

@@ -1,15 +1,4 @@
-"""China A-share panel built from two free Qlib-format dumps, the paper's own market.
-
-joshuaxql/qlib_data (Hugging Face): raw daily prices, VWAP, adjustment factor, market caps, price limits,
-ST intervals, Shenwan level-1 industry membership and point-in-time financial indicators (163 Tushare
-fina_indicator fields with announcement dates), 2010 onward, delisted stocks included.
-chenditc/investment_data (GitHub): adjusted prices back to 2000, used for the 2007-2009 history that
-long-horizon characteristics need, and the CSI 500 index (sh000905).
-
-Conventions (checked on 600519.SH): joshuaxql prices and VWAP are raw CNY, `factor` is the cumulative
-adjustment factor (adjusted price = raw * factor), volume is in lots of 100 shares, total_mv / circ_mv are
-in 10,000 CNY. chenditc prices are already adjusted and its amount is in 1,000 CNY.
-"""
+"""China A-share panel built from two free Qlib-format dumps, the paper's own market."""
 import json
 import warnings
 from pathlib import Path
@@ -21,10 +10,10 @@ from .data import ID_COLS, Q, rank_quantize, write_meta, write_panel_year
 
 PIT_REC = np.dtype([("field", "<u4"), ("date", "<u4"), ("period", "<u4"), ("value", "<f8"),
                     ("next", "<u4"), ("extra", "<u4")])
-PIT_HEADER = 72  # "QLPITD2\0", version, record size, 16-byte id, record count (u8 at byte 32), 32-byte hash
+PIT_HEADER = 72
 J_FIELDS = ["close", "high", "low", "volume", "vwap", "factor", "total_mv", "circ_mv", "up_limit", "down_limit"]
 C_FIELDS = ["close", "high", "low", "amount", "volume"]
-SPLICE = pd.Timestamp("2010-01-04")  # first joshuaxql day; earlier history comes from chenditc
+SPLICE = pd.Timestamp("2010-01-04")
 
 
 def calendar(root):
@@ -37,7 +26,7 @@ def chenditc_code(code):
 
 
 def load_wide(root, codes, fields, start, end, dir_names=None):
-    """dates x codes float32 frames, one per field. Each .day.bin is float32 values preceded by the start index."""
+    """dates x codes float32 frames, one per field."""
     root = Path(root)
     cal = calendar(root)
     lo, hi = cal.searchsorted(pd.Timestamp(start)), cal.searchsorted(pd.Timestamp(end), side="right")
@@ -77,11 +66,7 @@ def industry_codes(root, codes, dates):
 
 
 def pit_events(root, codes, field_names):
-    """For each stock and announcement date, the latest reported value of every financial indicator.
-
-    A record replaces the current value only if its report period is the latest seen so far, so a late
-    filing for an old quarter does not overwrite newer data.
-    """
+    """For each stock and announcement date, the latest reported value of every financial indicator."""
     frames = []
     for code in codes:
         p = Path(root) / "financial" / code / "pit.data"
@@ -124,7 +109,6 @@ def _rolling_moments(R, M, window, minp):
     cov, var_m, var_r = erm - er * em, emm - em * em, roll(R * R) - er * er
     beta = cov / var_m
     ivol = np.sqrt((var_r - beta * cov).clip(lower=0))
-    # E[(r - er)(m - em)^2] / (sd_r * var_m)
     erm2 = roll(R * Mm * Mm)
     cosk = (erm2 - 2 * em * erm + em * em * er - er * emm + 2 * er * em * em - er * em * em) / (np.sqrt(var_r) * var_m)
     down = Mm.where(Mm < 0)
@@ -137,33 +121,24 @@ def _rolling_moments(R, M, window, minp):
 def build_panel(j_root, c_root, panel_dir, panel_start="2010-01-01", panel_end="2023-12-31",
                 hist_start="2007-01-01", data_end="2024-01-31", codes=None, min_listing_days=60,
                 drop_locked_next=True, verbose=True):
-    """Long panel of investable stock-days with me, target, price/volume characteristics and industry dummies.
-
-    Tradability (not in the paper; see PAPER_ISSUES.md): a stock-day is dropped if the stock has traded for
-    fewer than `min_listing_days` days since listing (new A-share listings often rise by the daily limit for
-    weeks), or, with drop_locked_next, if it is locked at its upper price limit for the whole of day t+1, when
-    a buy order at VWAP cannot be filled. Without these rules a large part of the top decile's return comes
-    from untradeable stocks. `codes` restricts the stock list (for quick tests).
-    """
+    """Long panel of investable stock-days with me, target, price/volume characteristics and industry dummies."""
     log = print if verbose else (lambda *a, **k: None)
     j_root, c_root = Path(j_root), Path(c_root)
     codes = codes or sorted(p.name for p in (j_root / "features").iterdir() if p.is_dir())
     log(f"{len(codes)} stocks")
 
     J = load_wide(j_root, codes, J_FIELDS, SPLICE, data_end)
-    # chenditc is loaded a month past the splice only to cross-check the two sources; it is used before SPLICE
     H = load_wide(c_root, codes, C_FIELDS, hist_start, SPLICE + pd.DateOffset(months=1), [chenditc_code(c) for c in codes])
     idx = load_wide(c_root, ["CSI500"], ["close"], hist_start, data_end, ["sh000905"])["close"]["CSI500"]
     dates = H["close"].index[H["close"].index < SPLICE].append(J["close"].index)
     log(f"{len(dates)} trading days, {dates[0].date()} to {dates[-1].date()}")
     re = lambda X: X.reindex(dates)
 
-    # adjusted prices from each source; returns are spliced, so the two price scales never mix
     bar_j = re(J["close"]).notna()
     padj_j = re(J["close"] * J["factor"])
     ret_j = padj_j.ffill().pct_change(fill_method=None).where(bar_j)
     ret_h = re(H["close"]).ffill().pct_change(fill_method=None).where(re(H["close"]).notna())
-    after_splice = dates[dates > SPLICE][0]  # the 2010-01-04 return needs the 2009 close, so it comes from chenditc
+    after_splice = dates[dates > SPLICE][0]
     R = _splice(ret_h, ret_j, dates, after_splice).astype(np.float32)
     check = dates[dates > SPLICE][:20]
     a, b = ret_h.reindex(check).to_numpy(), ret_j.reindex(check).to_numpy()
@@ -178,11 +153,9 @@ def build_panel(j_root, c_root, panel_dir, panel_start="2010-01-01", panel_end="
     close_raw, total_mv, circ_mv = re(J["close"]), re(J["total_mv"]), re(J["circ_mv"])
     turn = re(J["volume"]) * 100 / (circ_mv * 1e4 / close_raw)
 
-    # target: VWAP(t+1) -> VWAP(t+2) return minus the CSI 500 close-to-close return over day t+2
     vadj = re(J["vwap"] * J["factor"])
     target = (vadj / vadj.shift(1) - 1).sub(M, axis=0).shift(-2)
 
-    # universe on day t: traded (bar with positive volume), not ST, target available
     st = interval_mask(j_root / "instruments" / "st.txt", codes, dates)
     universe = bar_j.to_numpy() & (re(J["volume"]).to_numpy() > 0) & ~st & np.isfinite(target.to_numpy())
     universe &= ((dates >= pd.Timestamp(panel_start)) & (dates <= pd.Timestamp(panel_end)))[:, None]
@@ -202,12 +175,12 @@ def build_panel(j_root, c_root, panel_dir, panel_start="2010-01-01", panel_end="
     ii, jj = np.nonzero(universe)
     log(f"universe: {len(ii):,} stock-days, {len(ii) / len(np.unique(ii)):,.0f} stocks per day")
     take = lambda X: np.asarray(X, dtype=np.float32)[ii, jj]
-    warnings.filterwarnings("ignore", category=RuntimeWarning)  # empty rolling windows before a stock lists
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
 
     lr = np.log1p(R.clip(lower=-0.9999))
     cum = lambda w, minp, lag=0: np.expm1(lr.rolling(w, min_periods=minp).sum().shift(lag))
     rmean = lambda X, w, minp: X.rolling(w, min_periods=minp).mean()
-    P = np.exp(lr.fillna(0).cumsum()).where(R.notna())  # return index, consistent across the splice
+    P = np.exp(lr.fillna(0).cumsum()).where(R.notna())
     up_hit = (close_raw >= re(J["up_limit"]) - 0.005).astype(np.float32).where(bar_j)
     dn_hit = (close_raw <= re(J["down_limit"]) + 0.005).astype(np.float32).where(bar_j)
     listed = R.notna().cumsum() > 0
@@ -279,10 +252,7 @@ def save_unranked(out, numeric, dummies, unranked_dir):
 
 
 def write_cn_panel(unranked_dir, j_root, panel_dir, field_names, overwrite=False, verbose=True):
-    """Add point-in-time fundamentals and valuation ratios, rank within each day, write one file per year.
-
-    Years already in panel_dir are skipped unless overwrite=True.
-    """
+    """Add point-in-time fundamentals and valuation ratios, rank within each day, write one file per year."""
     log = print if verbose else (lambda *a, **k: None)
     unranked_dir, panel_dir = Path(unranked_dir), Path(panel_dir)
     meta = json.loads((unranked_dir / "meta.json").read_text())
@@ -301,7 +271,7 @@ def write_cn_panel(unranked_dir, j_root, panel_dir, field_names, overwrite=False
             log(f"{y}: already written, skipped")
             continue
         g = pd.read_parquet(f).sort_values("date")
-        g = pd.merge_asof(g, events, on="date", by="code", allow_exact_matches=False)  # announced before day t
+        g = pd.merge_asof(g, events, on="date", by="code", allow_exact_matches=False)
         for k, src in VALUATION.items():
             g[f"v_{k}"] = (g[src] / g["close_raw"]).astype(np.float32)
         g = g.sort_values(["date", "permno"]).reset_index(drop=True)
@@ -318,11 +288,7 @@ def write_cn_panel(unranked_dir, j_root, panel_dir, field_names, overwrite=False
 
 
 def crosscheck_kaggle(j_root, kaggle_dir, n=300, seed=0, start="2011-01-01", end="2022-12-30"):
-    """Compare daily VWAP returns with the Kaggle StockChina files (JoinQuant data, an independent source).
-
-    Kaggle's `avg` is a forward-adjusted VWAP rounded to 0.01 CNY, so for stocks whose adjusted price is
-    small the rounding alone causes noticeable differences; the median gap is the useful number.
-    """
+    """Compare daily VWAP returns with the Kaggle StockChina files (JoinQuant data, an independent source)."""
     codes = sorted(p.name for p in (Path(j_root) / "features").iterdir() if p.is_dir())
     pick = list(np.random.default_rng(seed).choice(codes, n, replace=False))
     W = load_wide(j_root, pick, ["vwap", "factor"], start, end)

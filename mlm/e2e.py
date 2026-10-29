@@ -1,23 +1,4 @@
-"""End-to-end (E2E) training: the portfolio problem is a layer of the network (Sections 3.2-3.4, 4.2-4.4).
-
-The lower-level problem of eqs. (15) and (20), with the smoothing term squared (PAPER_ISSUES.md A2, A3):
-
-    w* = argmin_w  -w'rhat + zeta * ||w||^2 + gamma/2 * ||w - w_prev||_1
-         s.t.      0 <= w <= u,  sum(w) = 1,      u = 1 / (10% of N)
-
-is separable apart from the budget constraint, so its solution is w_i(tau) = clip(S_i(rhat_i - tau), 0, u)
-for one threshold tau, where S_i is the 1-D minimizer (a soft threshold around w_prev_i when gamma > 0).
-With gamma = 0 this is the Euclidean projection of rhat / (2 zeta) onto the capped simplex.
-
-Its exact Jacobian: on the "free" stocks F (strictly inside the bounds and off the w_prev plateau),
-dw/drhat = (I - 11'/|F|) / (2 zeta); elsewhere it is zero. That replaces the generic KKT differentiation of
-cvxpylayers (Section 3.3) with an O(N) computation, and gives the same answer.
-
-Objectives (E2EConfig.objective):
-    "top"     long-only top decile, eq. (15); with gamma > 0 the cost-aware eq. (20)   (Sections 4.2, 4.3)
-    "meansd"  mean-standard-deviation with cap 0.1 and diagonal covariance, eq. (21)   (Section 4.4)
-    "ppp"     parametric portfolio policy: capped softmax of the scores, same mean-SD utility, no layer
-"""
+"""End-to-end (E2E) training: the portfolio problem is a layer of the network (Sections 3.2-3.4, 4.2-4.4)."""
 import copy
 import time
 from dataclasses import dataclass, field
@@ -46,7 +27,7 @@ def _weights(v, tau, mask, u, p, gamma, zeta):
 class PortfolioLayer(torch.autograd.Function):
     """Batched over days: v (B, N) predictions, mask (B, N), u (B, 1) caps, p (B, N) previous weights."""
 
-    ITERS = 60  # bisection steps: the threshold's bracket shrinks by 2^-60
+    ITERS = 60
 
     @staticmethod
     def forward(ctx, v, mask, u, p, gamma, zeta):
@@ -110,21 +91,20 @@ class _GivenSolution(torch.autograd.Function):
 
 @dataclass
 class E2EConfig:
-    objective: str = "top"       # "top" (eqs. 15/20), "meansd" (eq. 21) or "ppp"
-    lr: float = 1e-3             # Adam, as in Appendix A.2.2 (the paper uses 1e-4 for eta < 1 in Section 4.4)
-    days_per_step: int = 8       # gradient accumulated over 8 cross-sections (Appendix A.2.2)
+    objective: str = "top"
+    lr: float = 1e-3
+    days_per_step: int = 8
     max_epochs: int = 100
     patience: int = 10
-    top_frac: float = 0.1        # "top": cap u = 1 / (10% of N), the long-only top decile
-    cap: float = 0.1             # "meansd"/"ppp": absolute cap w <= 0.1 (eq. 21)
-    eta: float = 1.0             # "meansd"/"ppp": risk aversion
-    zeta_rel: tuple = (0.2,)     # "top": smoothing relative to the spread of the warm-start predictions;
-    #                              several values are compared on validation (PAPER_ISSUES.md A2)
-    zeta_tune_windows: int = 0   # >0: compare the zeta_rel values only in the first k windows, then keep the most chosen
-    gamma: float = 0.0           # transaction cost rate (fraction)
-    da_mu: float = 0.0           # decision-aware PCA: penalty mu * ||W - W0||^2 / ||W0||^2 (0 keeps W fixed)
-    warm_start: bool = True      # False trains from a fresh initialization (PAPER_ISSUES.md D1)
-    target_scale: float = 100.0  # networks work in percent units, like the MSE models
+    top_frac: float = 0.1
+    cap: float = 0.1
+    eta: float = 1.0
+    zeta_rel: tuple = (0.2,)
+    zeta_tune_windows: int = 0
+    gamma: float = 0.0
+    da_mu: float = 0.0
+    warm_start: bool = True
+    target_scale: float = 100.0
     seed: int = 0
     device: str = field(default_factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
 
@@ -183,11 +163,7 @@ def _day_objective(cfg, w, y, mask, p_prev, dropped, sig):
 
 
 def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collect=False):
-    """One pass over the days. Returns the mean daily objective, yesterday's weights and (collect) a daily log.
-
-    With gamma > 0 days are processed in calendar order and each day starts from the previous day's weights
-    (detached: an input of the lower-level problem); otherwise blocks of days can be shuffled.
-    """
+    """One pass over the days."""
     model.train(train)
     steps = [(d, min(d + cfg.days_per_step, len(days))) for d in range(0, len(days), cfg.days_per_step)]
     if order is not None:
@@ -202,7 +178,6 @@ def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collec
             u = torch.full_like(u, cfg.cap)
         with torch.set_grad_enabled(train):
             v = _pad(model(X).squeeze(-1) / cfg.target_scale, row, col, B, N)
-            # in order when costs link the days, and when logging (so turnover is measured against yesterday)
             sequential = cfg.gamma > 0 or collect
             if not sequential:
                 if cfg.objective == "top":
@@ -213,7 +188,7 @@ def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collec
                     W = capped_softmax(v * cfg.target_scale, mask, u)
                 Pm = torch.zeros_like(W)
                 dropped = torch.zeros(B, device=W.device)
-            else:  # days depend on each other through yesterday's weights: solve them in order
+            else:
                 Ws, Ps, drops = [], [], []
                 gn, mn = gid.cpu().numpy(), mask.cpu().numpy()
                 for k in range(B):
@@ -266,9 +241,9 @@ def train_e2e(model, tr, va, cfg, zeta, n_ids):
         model.set_learnable(True)
     opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=cfg.lr)
     rng = np.random.default_rng(cfg.seed)
-    zeros = lambda: np.zeros(n_ids)  # yesterday's weights by stock id (CPU, used by the sequential solves)
+    zeros = lambda: np.zeros(n_ids)
     with torch.no_grad():
-        best, _, _ = epoch_pass(model, va, cfg, zeta, zeros(), train=False)  # the warm start itself
+        best, _, _ = epoch_pass(model, va, cfg, zeta, zeros(), train=False)
     start_val, best_state, best_epoch, bad = best, copy.deepcopy(model.state_dict()), 0, 0
     for epoch in range(1, cfg.max_epochs + 1):
         n_steps = -(-len(tr) // cfg.days_per_step)
@@ -323,7 +298,7 @@ def warm_model(name, warm_dir, window, n_features, cfg):
         if cfg.warm_start:
             m.load_state_dict(torch.load(d / f"{window}.pt", map_location="cpu"))
         return m
-    if name in LINEAR_GRIDS:  # closed-form coefficients -> a linear layer
+    if name in LINEAR_GRIDS:
         beta = np.load(d / f"{window}_beta.npy")
         m = nn.Linear(n_features, 1)
         with torch.no_grad():
@@ -332,12 +307,11 @@ def warm_model(name, warm_dir, window, n_features, cfg):
         return m
     if name in MIX_GRID:
         return _Scaled(load_mixture(d / f"{window}.pt"), cfg.target_scale)
-    return load_reduced(d / f"{window}.pt", name, n_features)  # "PCA20-NN3" and the like
+    return load_reduced(d / f"{window}.pt", name, n_features)
 
 
 def load_sigma(unranked_dir, frame, col="f_ivol252"):
-    """Ex-ante daily volatility for the mean-SD objective: one-year residual volatility (Section 4.4 uses a
-    one-year diagonal estimate); missing values get the day's median."""
+    """Ex-ante daily volatility for the mean-SD objective: one-year residual volatility, day median if missing."""
     years = sorted(frame["date"].dt.year.unique())
     s = pd.concat([pd.read_parquet(Path(unranked_dir) / f"{y}.parquet", columns=["date", "permno", col]) for y in years])
     out = frame[["date", "permno"]].merge(s, on=["date", "permno"], how="left")[col]
@@ -347,14 +321,7 @@ def load_sigma(unranked_dir, frame, col="f_ivol252"):
 
 def run_e2e(models, panel_dir, windows, warm_dir, out_dir, cfg, features=None, tag="E2E", verbose=True,
             unranked_dir="D:/ML_Markowitz_data/panel_cn_unranked"):
-    """E2E version of each saved two-stage model, warm-started from it (Appendix A.2.2).
-
-    models are names of saved two-stage models in warm_dir: the paper's networks, closed-form linear
-    families, reduced models ("PCA20-NN3") and mixtures ("GMM-Experts"). Writes out_dir/<tag>-<model>/:
-    <window>.parquet (test predictions), <window>_daily.parquet (the realized test portfolio, day by day)
-    and <window>.pt. For "top", zeta = zeta_rel x (spread of the warm-start predictions) / u, and with
-    several zeta_rel values the one with the best validation objective is kept.
-    """
+    """E2E version of each saved two-stage model, warm-started from it (Appendix A.2.2)."""
     out_dir, warm_dir = Path(out_dir), Path(warm_dir)
     features = features or panel_features(panel_dir)
     log_path = out_dir / f"{tag}_log.csv"
@@ -378,7 +345,7 @@ def run_e2e(models, panel_dir, windows, warm_dir, out_dir, cfg, features=None, t
             grid = cfg.zeta_rel if cfg.objective == "top" else (None,)
             if len(grid) > 1 and cfg.zeta_tune_windows > 0 and log_path.exists():
                 past = pd.read_csv(log_path).query("model == @m")
-                if len(past) >= cfg.zeta_tune_windows:  # chosen on past validation periods only: no look-ahead
+                if len(past) >= cfg.zeta_tune_windows:
                     grid = (float(past["zeta_rel"].head(cfg.zeta_tune_windows).mode().max()),)
             for zr in grid:
                 model = warm_model(m, warm_dir, w["name"], len(features), cfg).to(cfg.device)
@@ -408,10 +375,7 @@ def run_e2e(models, panel_dir, windows, warm_dir, out_dir, cfg, features=None, t
 
 
 def backtest_meansd(pred, sigma, eta, gamma=0.0, cap=0.1):
-    """Two-stage benchmark for Section 4.4 (MSE-Opt): solve eq. (21) each day with the given forecasts.
-
-    pred: date, permno, pred, target; sigma aligned with pred rows. Returns the daily realized portfolio.
-    """
+    """Two-stage benchmark for Section 4.4 (MSE-Opt): solve eq. (21) each day with the given forecasts."""
     df = pred.assign(sigma=sigma).sort_values(["date", "permno"])
     dates, start = np.unique(df["date"].to_numpy(), return_index=True)
     stop = np.append(start[1:], len(df))

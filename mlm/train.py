@@ -16,19 +16,17 @@ from .models import make_model
 
 @dataclass
 class TrainConfig:
-    lr: float = 1e-3            # Adam learning rate (Appendix A.2.2)
-    batch_size: int = 10_000    # not reported in the paper; 10,000 follows Gu et al. (2020)
-    max_epochs: int = 100       # not reported in the paper
-    patience: int = 10          # early stopping on validation MSE (Appendix A.2.2)
-    target_scale: float = 100.0  # train on percent returns for better conditioning; predictions are rescaled back
-    winsor: tuple | None = (0.005, 0.995)  # per-day clipping of training/validation labels only
-    embargo: int = 2            # trading days dropped before each split boundary
-    data_on_device: bool = True  # keep the window's int8 features on the GPU (about 1 GB)
-    use_cuda_graph: bool = False  # optional CUDA-graph steps (GraphStep); off: barely faster on this GPU, and
-    #                               dropout draws differ inside a graph, so runs would not match earlier ones
-    loss: str = "mse"           # "mse" (the paper), "eps" (epsilon-insensitive, SVR) or "huber"
-    eps: float = 0.5            # SVR tube half-width / Huber threshold, in percent daily return
-    weight_decay: float = 0.0   # L2 penalty on the weights (the ||w||^2 term of an SVR)
+    lr: float = 1e-3
+    batch_size: int = 10_000
+    max_epochs: int = 100
+    patience: int = 10
+    target_scale: float = 100.0
+    winsor: tuple | None = (0.005, 0.995)
+    embargo: int = 2
+    data_on_device: bool = True
+    loss: str = "mse"
+    eps: float = 0.5
+    weight_decay: float = 0.0
     seed: int = 0
     device: str = field(default_factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
 
@@ -56,49 +54,10 @@ def predict(model, X, device, batch=200_000):
     return torch.cat(out).numpy()
 
 
-class GraphStep:
-    """One full training step (forward, backward, Adam) captured as a CUDA graph and replayed per batch.
-
-    The networks are so small that a step is dominated by launching ~100 tiny kernels; replaying a captured
-    graph launches them as one unit. Batches, updates and the protocol are unchanged. Capture needs a few
-    warm-up steps on throwaway data, so all parameters, buffers and optimizer state are restored afterwards.
-    """
-
-    def __init__(self, model, opt, batch_size, n_features, device):
-        self.x = torch.zeros(batch_size, n_features, device=device)
-        self.y = torch.zeros(batch_size, device=device)
-        keep = [t.detach().clone() for t in list(model.parameters()) + list(model.buffers())]
-        side = torch.cuda.Stream()
-        side.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(side):
-            for _ in range(3):
-                opt.zero_grad(set_to_none=True)
-                F.mse_loss(model(self.x).squeeze(-1), self.y).backward()
-                opt.step()
-        torch.cuda.current_stream().wait_stream(side)
-        self.graph = torch.cuda.CUDAGraph()
-        opt.zero_grad(set_to_none=True)
-        with torch.cuda.graph(self.graph):
-            F.mse_loss(model(self.x).squeeze(-1), self.y).backward()
-            opt.step()
-        with torch.no_grad():  # undo the warm-up
-            for t, k in zip(list(model.parameters()) + list(model.buffers()), keep):
-                t.copy_(k)
-            for st in opt.state.values():
-                for v in st.values():
-                    if torch.is_tensor(v):
-                        v.zero_()
-
-    def __call__(self, xb, yb):
-        self.x.copy_(xb)
-        self.y.copy_(yb)
-        self.graph.replay()
-
-
 def loss_fn(cfg):
     if cfg.loss == "mse":
         return F.mse_loss
-    if cfg.loss == "eps":  # epsilon-insensitive: errors inside the tube cost nothing
+    if cfg.loss == "eps":
         return lambda p, y: torch.clamp((p - y).abs() - cfg.eps, min=0).mean()
     if cfg.loss == "huber":
         return lambda p, y: F.huber_loss(p, y, delta=cfg.eps)
@@ -108,31 +67,20 @@ def loss_fn(cfg):
 def fit_mse(model, Xtr, ytr, Xva, yva, cfg):
     """Fit by the configured statistical loss (MSE by default); early stopping on validation MSE."""
     model.to(cfg.device)
-    use_graph = cfg.use_cuda_graph and cfg.device != "cpu" and Xtr.is_cuda and cfg.loss == "mse"
     crit = loss_fn(cfg)
     params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.Adam(params, lr=cfg.lr, capturable=use_graph, weight_decay=cfg.weight_decay)
+    opt = torch.optim.Adam(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
     gen = torch.Generator().manual_seed(cfg.seed)
     best, best_epoch, best_state, bad = np.inf, 0, None, 0
-    step = None
-    if use_graph:
-        model.train()
-        try:
-            step = GraphStep(model, opt, cfg.batch_size, Xtr.shape[1], cfg.device)
-        except RuntimeError:  # capture not supported here: fall back to ordinary steps
-            step = None
     for epoch in range(1, cfg.max_epochs + 1):
         model.train()
-        perm = torch.randperm(len(ytr), generator=gen).to(Xtr.device)  # drawn on the CPU: same batches either way
+        perm = torch.randperm(len(ytr), generator=gen).to(Xtr.device)
         for s in range(0, len(perm), cfg.batch_size):
             idx = perm[s:s + cfg.batch_size]
-            if len(idx) < 2:  # BatchNorm needs at least two rows
+            if len(idx) < 2:
                 continue
             xb, yb = _dev(Xtr[idx], cfg.device), ytr[idx].to(cfg.device)
-            if step is not None and len(idx) == cfg.batch_size:
-                step(xb, yb)
-                continue
-            loss = crit(model(xb).squeeze(-1), yb)  # (the last, shorter batch always runs here)
+            loss = crit(model(xb).squeeze(-1), yb)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -150,13 +98,7 @@ def fit_mse(model, Xtr, ytr, Xva, yva, cfg):
 
 def run_rolling(models, panel_dir, windows, out_dir, cfg, features=None, verbose=True, log_name="train_log.csv",
                 tag=""):
-    """Train every model on every window and save out-of-sample predictions.
-
-    Writes out_dir/<model><tag>/<window>.parquet (date, permno, me, target, pred), <window>_val.parquet and
-    <window>.pt (weights, reused to warm-start the E2E model as in Appendix A.2.2). `tag` names variants of
-    the same architecture, e.g. tag="-SVR" with cfg.loss="eps". Finished model-window pairs are skipped,
-    so an interrupted run can be resumed by calling this again. Parallel workers need their own log_name.
-    """
+    """Train every model on every window and save out-of-sample predictions."""
     out_dir = Path(out_dir)
     features = features or panel_features(panel_dir)
     log_path = out_dir / log_name
@@ -171,12 +113,12 @@ def run_rolling(models, panel_dir, windows, out_dir, cfg, features=None, verbose
         Xte = to_tensors(te, features, cfg, labels=False)
         if cfg.data_on_device and cfg.device != "cpu":
             need = Xtr.nbytes + Xva.nbytes + Xte.nbytes + ytr.nbytes
-            if torch.cuda.mem_get_info()[0] > need + 1.5e9:  # leave room for the model and batches
+            if torch.cuda.mem_get_info()[0] > need + 1.5e9:
                 Xtr, ytr, Xva, Xte = (t.to(cfg.device) for t in (Xtr, ytr, Xva, Xte))
         n_tr, n_va = len(tr), len(va)
         te = te[["date", "permno", "me", "target"]].reset_index(drop=True)
         va_meta = va[["date", "permno", "me", "target"]].reset_index(drop=True)
-        del df, tr, va  # the features now live in the tensors
+        del df, tr, va
         for m in todo:
             t0 = time.time()
             torch.manual_seed(cfg.seed)
@@ -184,7 +126,6 @@ def run_rolling(models, panel_dir, windows, out_dir, cfg, features=None, verbose
             res = te.assign(pred=predict(model, Xte, cfg.device) / cfg.target_scale)
             d = out_dir / f"{m}{tag}"
             d.mkdir(parents=True, exist_ok=True)
-            # validation predictions, for choices made on validation (e.g. the tuned MSE-Opt benchmark)
             va_meta.assign(pred=predict(model, Xva, cfg.device) / cfg.target_scale).to_parquet(
                 d / f"{w['name']}_val.parquet", index=False)
             res.to_parquet(d / f"{w['name']}.parquet", index=False)
@@ -199,12 +140,8 @@ def run_rolling(models, panel_dir, windows, out_dir, cfg, features=None, verbose
 
 
 def load_predictions(out_dir, model, split="test"):
-    """Out-of-sample (split="test") or validation (split="val") predictions of one model, all windows.
-
-    A `window` column records the source window: validation periods of consecutive windows overlap, so
-    validation predictions must be used window by window.
-    """
-    files = sorted((Path(out_dir) / model).glob("*.parquet"))  # E2E runs also hold <window>_daily portfolios
+    """Out-of-sample (split="test") or validation (split="val") predictions of one model, all windows."""
+    files = sorted((Path(out_dir) / model).glob("*.parquet"))
     files = [f for f in files if f.stem.endswith("_val") == (split == "val") and not f.stem.endswith("_daily")]
     parts = [pd.read_parquet(f).assign(window=f.stem.removesuffix("_val")) for f in files]
     return pd.concat(parts, ignore_index=True).sort_values(["date", "permno"])

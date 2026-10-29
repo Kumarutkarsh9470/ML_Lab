@@ -6,10 +6,4 @@ scipy
 scikit-learn
 statsmodels
 matplotlib
-nbformat
-nbconvert
 ipykernel
-# optional: the US (WRDS) version of the panel
-wrds
-openassetpricing
-polars

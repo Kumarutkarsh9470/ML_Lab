@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Run run_real.py until it finishes, restarting it after a crash (every stage resumes from its saved outputs).
-# Gives up after three restarts in a row that saved nothing new.
-#     bash run_chain.sh ext C A D B E
 PRED=D:/ML_Markowitz_data/preds/cn
 LOG=$PRED/run_real.log
 count() { find "$PRED" -name "*.parquet" | wc -l; }
