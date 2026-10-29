@@ -1,7 +1,8 @@
-# Learning for the Decision
+# Machine Learning Meets Markowitz
 
 Replication and extension of Wang, Gao, Harvey, Liu and Tao (2026), *Machine Learning Meets Markowitz*
-(SSRN 5947774), on daily China A-shares from 2010 to 2023, using only free data.
+(SSRN 5947774), on daily China A-shares from 2010 to 2023, using only free data. By Kumar Utkarsh and
+Pratham Saluja, Indian Institute of Technology Guwahati.
 
 The paper trains return forecasts for the portfolio they feed rather than for mean squared error, by placing
 the portfolio optimizer inside the network (end-to-end, E2E, learning). This repository contains:
