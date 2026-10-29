@@ -204,7 +204,7 @@ def load_predictions(out_dir, model, split="test"):
     A `window` column records the source window: validation periods of consecutive windows overlap, so
     validation predictions must be used window by window.
     """
-    files = sorted((Path(out_dir) / model).glob("*.parquet"))
-    files = [f for f in files if f.stem.endswith("_val") == (split == "val")]
+    files = sorted((Path(out_dir) / model).glob("*.parquet"))  # E2E runs also hold <window>_daily portfolios
+    files = [f for f in files if f.stem.endswith("_val") == (split == "val") and not f.stem.endswith("_daily")]
     parts = [pd.read_parquet(f).assign(window=f.stem.removesuffix("_val")) for f in files]
     return pd.concat(parts, ignore_index=True).sort_values(["date", "permno"])

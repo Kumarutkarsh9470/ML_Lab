@@ -2,7 +2,7 @@
 \pdfsuppressptexinfo=-1
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage[margin=0.72in]{geometry}
+\usepackage[margin=0.66in]{geometry}
 \usepackage[compact]{titlesec}
 \titlespacing*{\section}{0pt}{8pt}{3pt}
 \titleformat*{\section}{\large\bfseries}
@@ -17,6 +17,7 @@
 \usepackage[font=small,labelfont=bf]{caption}
 \usepackage[hidelinks,pdfcreator={},pdfproducer={}]{hyperref}
 \usepackage{enumitem}
+\usepackage{multicol}
 \setlist{nosep,leftmargin=1.2em}
 \setlength{\parskip}{3pt}
 
@@ -37,13 +38,14 @@ minimize mean squared error and its forecasts are then passed to an optimizer. W
 (2026) argue that this separation is costly and propose end-to-end (E2E) training, in which the optimizer is a
 differentiable layer and the network is trained on the realized portfolio objective. We replicate their design on
 the same market (daily China A-shares, 2010 to 2023) using only free data, audit the paper's internal
-consistency, and extend it. We derive an exact, GPU-native differentiable layer for the paper's portfolio
-problems that replaces generic convex-optimization differentiation, fit a family of closed-form linear and
-dimension-reduction models (ridge, PCR, PLS, LDA) from sufficient statistics, and propose decision-aware dimension
+consistency, and extend it. We derive exact differentiable layers for the paper's portfolio problems, fit
+closed-form linear and dimension-reduction models (ridge, PCR, PLS, LDA), and propose decision-aware dimension
 reduction. We also show that, without tradability rules the paper does not state, much of the long-only
-return comes from newly listed stocks locked at their upper price limit, which cannot be bought. Preliminary
-results show the paper's central point in our data: the models with the best statistical accuracy do not
-produce the best long-only portfolios.
+return comes from newly listed stocks locked at their upper price limit, which cannot be bought. Out of sample
+over 2014 to 2023, end-to-end training lowers statistical accuracy but raises long-only returns, most for models
+that are weak under MSE; decision-aware PCA lifts a 20-component linear model from a Sharpe ratio of 1.00 to 1.36
+($t=5.0$). With 20 bps costs, end-to-end training cuts daily turnover from 28\% to 7\%, but its edge over a
+validation-tuned cost-aware benchmark is not significant.
 \end{abstract}
 
 \section{Introduction}
@@ -60,6 +62,8 @@ raises long-only returns, survives transaction costs and traces a better efficie
 \item An exact differentiable portfolio layer with an $O(N)$ closed-form Jacobian (Section~\ref{sec:layer}).
 \item Extensions in the prediction layer: closed-form linear and dimension-reduction models, decision-aware
   PCA, and mixture-of-experts models (Section~\ref{sec:ext}).
+\item Full out-of-sample results for E2E training, decision-aware PCA, transaction costs and mean--SD utility,
+  each tested against its own two-stage starting point (Section~\ref{sec:results}).
 \end{enumerate}
 
 \section{Data and replication design}\label{sec:data}
@@ -149,11 +153,9 @@ For the networks the bottleneck feeds nonlinear layers and changes the function 
 variant chooses directions that minimize $\bm v^\top\bm C_\Delta\bm v/\bm v^\top\bm C\bm v$, with $\bm C_\Delta$ the
 covariance of daily changes, favouring slow, low-turnover signals for the cost experiment.
 
-\paragraph{Mixtures and robust losses.} A Gaussian mixture fit on PCA scores gives soft memberships $\pi_k(\bm x)$ and
-a mixture of linear experts $g(\bm x)=\sum_k\pi_k(\bm x)\bm x^\top\bm\beta_k$, mirroring the paper's own
-four-asset example in which large and small firms follow different pricing rules. A linear SVR
-($\varepsilon$-insensitive loss) and a random-Fourier-feature kernel approximation provide robust and nonlinear
-two-stage baselines.
+\paragraph{Mixtures and robust losses.} A Gaussian mixture on PCA scores gives memberships $\pi_k(\bm x)$ and linear
+experts $g(\bm x)=\sum_k\pi_k(\bm x)\bm x^\top\bm\beta_k$, as in the paper's example where large and small firms
+price differently. Linear and random-Fourier-feature SVR give robust and nonlinear baselines.
 
 \section{Auditing the original paper}\label{sec:audit}
 Table~\ref{tab:audit} lists the most consequential findings; each numeric item was recomputed from the paper's
@@ -161,7 +163,7 @@ tables. The paper's four-asset example (its Table 1) reproduces exactly, as do i
 accounting.
 
 \begin{table}[h]
-\centering\footnotesize
+\centering\scriptsize
 \caption{Selected inconsistencies in Wang et al.\ (2026) and how we handle them.}\label{tab:audit}
 \begin{tabular}{p{7.4cm}p{8.4cm}}
 \toprule
@@ -181,47 +183,89 @@ No tradability rule: in 2017Q1, untradeable new listings and limit-locked stocks
 \end{tabular}
 \end{table}
 
-\section{Preliminary results}
-Table~\ref{tab:results} reports out-of-sample results over the 40 test quarters. Figure~\ref{fig:ic} places
-statistical accuracy and portfolio quality side by side. Rows for the paper's six networks and their E2E
-versions are added as training completes.
+\section{Results}\label{sec:results}
+All results are out of sample over the 40 test quarters (2,434 trading days, 2014--2023). Table~\ref{tab:results}
+reports the two-stage models. Table~\ref{tab:e2e} compares each E2E model with the two-stage model it starts
+from, both held as the equal-weighted top decile of their own forecasts, as in the paper's Table 2.
+
+\begin{table}[h]
+\centering\scriptsize
+\caption{Two-stage models, 2014--2023. Top decile is the equal-weighted long-only portfolio, before costs;
+returns are market-adjusted (vs CSI 500) and annualized; turnover is daily and one-sided.}\label{tab:results}
+\input{tables/results.tex}
+\end{table}
 
 \begin{table}[h]
 \centering\footnotesize
-\caption{Out-of-sample results, 2014--2023. Top decile is the equal-weighted long-only portfolio, before costs;
-returns are market-adjusted and annualized.}\label{tab:results}
-\input{tables/results.tex}
+\caption{End-to-end training against its two-stage start: long-only top decile, before costs. The difference is
+annualized; $t$ uses Newey--West errors.}\label{tab:e2e}
+\input{tables/decision.tex}
 \end{table}
 
 \begin{figure}[!htb]
 \centering
-\includegraphics[width=0.72\linewidth]{figures/fig_ic_vs_sharpe.pdf}\\[2pt]
-\small (a) Rank IC and long-only Sharpe ratio for the same models, sorted by Sharpe ratio.\\[6pt]
-\includegraphics[width=0.72\linewidth]{figures/fig_cumulative.pdf}\\[2pt]
-\small (b) Cumulative market-adjusted return of the long-only top decile.
+\begin{minipage}[c]{0.47\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/fig_ic_vs_sharpe.pdf}\\[2pt]
+\footnotesize (a) Rank IC and long-only Sharpe ratio; orange models are trained end to end.
+\end{minipage}\hfill
+\begin{minipage}[c]{0.51\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/fig_cumulative.pdf}\\[2pt]
+\footnotesize (b) Cumulative market-adjusted return of the long-only top decile.
+\end{minipage}
 \caption{Statistical accuracy versus portfolio quality, 2014--2023.}\label{fig:ic}\label{fig:cum}
 \end{figure}
 
-\noindent Four findings stand out. First, statistical and decision quality disagree. Ridge on return ranks,
-LDA and PLS have the highest rank ICs (0.077, 0.073, 0.071), yet the linear model trained by MSE has the best
-long-only Sharpe ratio (1.36). This is the paper's argument, reproduced in a different model class, and it
-motivates choosing the reduction by the decision rather than by variance or class separation. Second, unlike the
-paper, the networks do not beat the linear model in the long-only portfolio (NN3: Sharpe 1.23). Third,
-tradability matters: before we excluded new listings and limit-locked stocks, the same models earned over 50\% a
-year, largely from 2015 to 2017. Excluding the bottom 30\% by market capitalization, the linear model earns
-22.8\% (Sharpe 1.03), against the paper's 28.0\% (1.44). Fourth, the CSI 500 is a mid-cap index, and the average
-stock in our universe beat it by 2.4\% a year, so market-adjusted returns are partly a size effect.
+\paragraph{Accuracy is not decision quality.} Among two-stage models, ridge on return ranks, linear SVR and LDA
+have the highest rank ICs (0.077, 0.075, 0.073), yet the linear model fit by MSE has the best long-only Sharpe
+ratio (1.36). E2E training makes the point directly: it lowers every model's rank IC (NN3 from 0.061 to 0.056,
+ridge from 0.069 to 0.053) while raising its top-decile return (Figure~\ref{fig:ic}a).
 
-\section{Conclusion and next steps}
-We have a validated, free-data replication of the paper's setting with explicit tradability rules, exact
-differentiable portfolio layers for the top-decile, cost-aware and mean--SD problems, and a closed-form linear
-family. All extensions are implemented and tested; the remaining step is running them at full scale: the E2E
-versions of the paper's networks and of our models, the transaction-cost and risk-aversion experiments,
-decision-aware PCA, the reduced networks and the GMM experts. Code: see the accompanying repository.
-Because many variants are compared, we will fix the grid in advance, report every setting and adjust for multiple
-testing.
+\paragraph{End-to-end learning.} E2E raises the long-only return of NN3 by 2.5 points a year ($t=1.69$,
+one-sided $p=0.05$, two-sided $p=0.09$) and of ridge by 4.1 points ($t=2.17$), adds little to the linear model
+(+0.7) and lowers the GMM experts ($-2.1$). Once trained for the decision, the network no longer trails the
+linear model (NN3 Sharpe ratio from 1.23 to 1.35), but the gains are far smaller than the paper's. The warm start
+is not doing the work: on the first eight windows NN3 trained from scratch reaches a Sharpe ratio of 1.79,
+against 1.84 when warm-started and 1.67 for the two-stage model.
 
-\begin{thebibliography}{9}\footnotesize\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}
+\paragraph{Decision-aware PCA.} Twenty principal components are a poor basis for a linear model (Sharpe ratio
+1.00, the lowest in its family). Letting the portfolio objective move the loadings raises its return from 21.8\%
+to 30.4\% a year (Sharpe ratio 1.36, $t=4.96$), level with the full 251-feature model. The two decision-aware
+PCA20-Linear comparisons are the only ones in Table~\ref{tab:e2e} that survive a Holm adjustment for the nine
+tests. We did not run E2E with the PCA loadings fixed for this model, so the gain combines E2E training of the
+head with the moving loadings. For NN3 the effect is small (+1.4 points, $t=1.03$), and a stronger pull toward
+PCA ($\mu=1$) helps less than $\mu=0.1$.
+
+\paragraph{Other reductions and mixtures.} For NN3 the choice of reduction matters little (Sharpe ratio 1.24 with
+PCA, 1.19 with LDA, 1.01 with PLS), and none beats the full feature set. The persistence-aware basis cuts daily
+turnover from about 30\% to 3\% but loses most of the signal (IC 0.021). The GMM mixture of experts (Sharpe ratio
+1.27) is matched by hard size terciles (1.36): its gain comes from separating large and small firms, which a size
+split already does.
+
+\paragraph{Transaction costs.} At 20 bps, NN3 trained with costs earns 24.7\% a year net of costs (Sharpe ratio
+1.07) with 7\% daily turnover. The MSE top decile earns 15.2\% with 28\% turnover ($t=7.27$ for the difference),
+the cost-aware optimizer fed MSE forecasts (MSE-Opt) 22.1\% ($t=2.09$), and MSE-Opt with its cost penalty tuned on
+validation 23.2\% ($t=1.23$). Much of E2E's lead over the paper's MSE-Opt benchmark thus reflects the benchmark's
+mis-scaled forecasts (Table~\ref{tab:audit}).
+
+\paragraph{Mean--SD utility.} With $\eta=1$ and a 10\% cap, the mean--SD E2E network earns 30.0\% a year at 22.1\%
+volatility (Sharpe ratio 1.36), against 29.5\% and 23.0\% (1.28) when the same problem is solved with the MSE
+forecasts; the difference is not significant ($t=0.30$).
+
+\paragraph{Size and tradability.} Without the bottom 30\% by market capitalization the linear model earns 22.8\%
+(Sharpe ratio 1.03; the paper: 28.0\%, 1.44). Without our tradability rules the same models earned over 50\% a
+year. The average stock beat the mid-cap CSI 500 by 2.4\% a year, so part of every return is a size effect.
+
+\section{Conclusion}
+On free China A-share data with explicit tradability rules, training for the decision instead of for accuracy
+improves long-only portfolios, but by less than Wang et al.\ report, and mainly for models that are weak under
+MSE. The clearest gain comes from decision-aware PCA, which turns the weakest linear model into one of the best.
+With costs, E2E training sharply cuts turnover, but a properly tuned two-stage benchmark closes most of the gap,
+so claims of dominance should be tested against such benchmarks. This round covers one cost level (20 bps) and
+one risk aversion ($\eta=1$); the full grids, the PPP benchmark and the persistence-aware basis under costs are
+implemented and left for the next round. Code: see the accompanying repository.
+
+\begin{multicols}{2}
+\begin{thebibliography}{9}\scriptsize\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}
 \bibitem{wang} Wang, Y., Gao, H., Harvey, C.\,R., Liu, Y., Tao, X. (2026). Machine learning meets Markowitz. Working paper, SSRN 5947774.
 \bibitem{gkx} Gu, S., Kelly, B., Xiu, D. (2020). Empirical asset pricing via machine learning. \emph{Review of Financial Studies} 33(5), 2223--2273.
 \bibitem{amos} Amos, B., Kolter, J.\,Z. (2017). OptNet: differentiable optimization as a layer in neural networks. \emph{ICML}.
@@ -230,4 +274,5 @@ testing.
 \bibitem{lsy} Liu, J., Stambaugh, R.\,F., Yuan, Y. (2019). Size and value in China. \emph{Journal of Financial Economics} 134(1), 48--69.
 \bibitem{hlz} Harvey, C.\,R., Liu, Y., Zhu, H. (2016). \ldots and the cross-section of expected returns. \emph{Review of Financial Studies} 29(1), 5--68.
 \end{thebibliography}
+\end{multicols}
 \end{document}

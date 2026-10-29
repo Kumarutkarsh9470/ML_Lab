@@ -120,6 +120,7 @@ class E2EConfig:
     eta: float = 1.0             # "meansd"/"ppp": risk aversion
     zeta_rel: tuple = (0.2,)     # "top": smoothing relative to the spread of the warm-start predictions;
     #                              several values are compared on validation (PAPER_ISSUES.md A2)
+    zeta_tune_windows: int = 0   # >0: compare the zeta_rel values only in the first k windows, then keep the most chosen
     gamma: float = 0.0           # transaction cost rate (fraction)
     da_mu: float = 0.0           # decision-aware PCA: penalty mu * ||W - W0||^2 / ||W0||^2 (0 keeps W fixed)
     warm_start: bool = True      # False trains from a fresh initialization (PAPER_ISSUES.md D1)
@@ -196,6 +197,7 @@ def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collec
     for d0, d1 in steps:
         X, row, col, mask, y, gid, u, sig = days.block(d0, d1)
         B, N = mask.shape
+        keys = days.df["date"].to_numpy()[days.start[d0:d1]]
         if cfg.objective != "top":
             u = torch.full_like(u, cfg.cap)
         with torch.set_grad_enabled(train):
@@ -206,7 +208,7 @@ def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collec
                 if cfg.objective == "top":
                     W = portfolio(v, mask, u, zeta=zeta)
                 elif cfg.objective == "meansd":
-                    W = meansd_portfolio(v, sig, mask, u, cfg.eta)
+                    W = meansd_portfolio(v, sig, mask, u, cfg.eta, keys=keys)
                 else:
                     W = capped_softmax(v * cfg.target_scale, mask, u)
                 Pm = torch.zeros_like(W)
@@ -227,7 +229,7 @@ def epoch_pass(model, days, cfg, zeta, prev, train, opt=None, order=None, collec
                         wk = _GivenSolution.apply(v[k:k + 1], torch.from_numpy(Wf).float().to(v.device)[None],
                                                   torch.from_numpy(Ff).to(v.device)[None], zeta)
                     elif cfg.objective == "meansd":
-                        wk = meansd_portfolio(v[k:k + 1], sig[k:k + 1], mask[k:k + 1], u[k:k + 1], cfg.eta, pt, cfg.gamma)
+                        wk = meansd_portfolio(v[k:k + 1], sig[k:k + 1], mask[k:k + 1], u[k:k + 1], cfg.eta, pt, cfg.gamma, keys=keys[k:k + 1])
                     else:
                         wk = capped_softmax(v[k:k + 1] * cfg.target_scale, mask[k:k + 1], u[k:k + 1])
                     drops.append(prev.sum() - p[:n_k].sum())
@@ -373,7 +375,12 @@ def run_e2e(models, panel_dir, windows, warm_dir, out_dir, cfg, features=None, t
             t0 = time.time()
             torch.manual_seed(cfg.seed)
             best = None
-            for zr in (cfg.zeta_rel if cfg.objective == "top" else (None,)):
+            grid = cfg.zeta_rel if cfg.objective == "top" else (None,)
+            if len(grid) > 1 and cfg.zeta_tune_windows > 0 and log_path.exists():
+                past = pd.read_csv(log_path).query("model == @m")
+                if len(past) >= cfg.zeta_tune_windows:  # chosen on past validation periods only: no look-ahead
+                    grid = (float(past["zeta_rel"].head(cfg.zeta_tune_windows).mode().max()),)
+            for zr in grid:
                 model = warm_model(m, warm_dir, w["name"], len(features), cfg).to(cfg.device)
                 zeta = 1.0
                 if zr is not None:

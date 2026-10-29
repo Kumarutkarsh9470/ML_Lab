@@ -256,41 +256,59 @@ s.addNotes("Dimension reduction sits between the features and the model. We comp
 // ---------- 7. Results ----------
 pres.addSection({ title: "Results" });
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Results" });
-s.addText("Results so far (2014–2023, 40 test quarters)", { placeholder: "title" });
-const models = Object.keys(S.models).sort((a, b) => S.models[a].H_sr - S.models[b].H_sr);
-const chartOpts = (title, fmt) => ({
-  barDir: "bar", chartColors: [HEX.blue], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: fmt,
-  dataLabelFontSize: 11, dataLabelColor: HEX.ink2, dataLabelFontFace: "+mn-lt",
-  showTitle: true, title, titleFontSize: 14, titleColor: HEX.navy, titleFontFace: "+mn-lt",
-  catAxisLabelColor: HEX.ink2, catAxisLabelFontSize: 11, catAxisLabelFontFace: "+mn-lt", catAxisLineShow: false,
-  valAxisHidden: true, valGridLine: { style: "none" }, catGridLine: { style: "none" },
-  showLegend: false, barGapWidthPct: 45,
+s.addText("Results: training for the decision (2014–2023)", { placeholder: "title" });
+const DF = path.join(__dirname, "results_decision.json");
+const D = fs.existsSync(DF) ? JSON.parse(fs.readFileSync(DF, "utf8")) : { pairs: {}, costs: {}, meansd: {} };
+const PAIR_LABEL = { "E2E-Linear": "Linear", "E2E-NN3": "NN3", "E2E-Ridge": "Ridge", "E2E-GMM-Experts": "GMM experts",
+  "E2E-PCA20-NN3": "PCA20-NN3, PCA fixed", "DA0.1-PCA20-NN3": "PCA20-NN3, DA μ=0.1", "DA1-PCA20-NN3": "PCA20-NN3, DA μ=1",
+  "DA0.1-PCA20-Linear": "PCA20-Linear, DA μ=0.1",
+  "DA1-PCA20-Linear": "PCA20-Linear, DA μ=1" };
+const pairs = Object.keys(PAIR_LABEL).filter((k) => D.pairs[k]).reverse(); // bar charts list bottom-up
+const r2 = (v) => Number(v.toFixed(2));
+s.addChart(pres.ChartType.bar, [
+  { name: "Two-stage (MSE)", labels: pairs.map((k) => PAIR_LABEL[k]), values: pairs.map((k) => r2(D.pairs[k].two_stage.sr)) },
+  { name: "End-to-end", labels: pairs.map((k) => PAIR_LABEL[k]), values: pairs.map((k) => r2(D.pairs[k].e2e.sr)) },
+], {
+  x: 0.6, y: 1.4, w: 6.3, h: 4.45, barDir: "bar", barGrouping: "clustered", chartColors: [HEX.blue, HEX.orange],
+  showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "0.00", dataLabelFontSize: 10, dataLabelColor: HEX.ink2,
+  dataLabelFontFace: "+mn-lt", showTitle: true, title: "Long-only top decile: Sharpe ratio, before costs", titleFontSize: 14,
+  titleColor: HEX.navy, titleFontFace: "+mn-lt", catAxisLabelColor: HEX.ink2, catAxisLabelFontSize: 11,
+  catAxisLabelFontFace: "+mn-lt", catAxisLineShow: false, valAxisHidden: true, valGridLine: { style: "none" },
+  catGridLine: { style: "none" }, showLegend: true, legendPos: "t", legendFontSize: 11, legendFontFace: "+mn-lt",
+  legendColor: HEX.ink2, barGapWidthPct: 40, objectName: "chart-e2e-vs-two-stage",
 });
-// round as the report does (binary rounding of the same doubles), so slide and paper show identical numbers
-s.addChart(pres.ChartType.bar, [{ name: "Rank IC", labels: models, values: models.map((m) => Number(S.models[m].IC.toFixed(3))) }],
-  { x: 0.6, y: 1.4, w: 4.1, h: 4.3, ...chartOpts("Statistical accuracy: mean daily rank IC", "0.000"), objectName: "chart-ic" });
-s.addChart(pres.ChartType.bar, [{ name: "Sharpe", labels: models, values: models.map((m) => Number(S.models[m].H_sr.toFixed(2))) }],
-  { x: 4.85, y: 1.4, w: 4.1, h: 4.3, ...chartOpts("Portfolio quality: top-decile Sharpe", "0.00"), objectName: "chart-sr" });
-card(s, 9.2, 1.45, 3.55, 2.65, HEX.tintOrange, "Higher IC ≠ better portfolio", "finding-card");
-const by = (key) => Object.keys(S.models).reduce((a, b) => (S.models[a][key] >= S.models[b][key] ? a : b));
+// three findings, each a big number with its source
+const stat = (y, fill, big, head, body, name) => {
+  box(s, 7.15, y, 5.6, 1.42, fill, name);
+  text(s, big, { x: 7.35, y: y + 0.14, w: 1.85, h: 1.15, fontSize: 28, bold: true, color: HEX.orange, valign: "middle", fontFace: THEME.headFontFace });
+  text(s, [{ text: head, options: { bold: true, breakLine: true } }, { text: body, options: { color: HEX.ink2 } }],
+    { x: 9.3, y: y + 0.14, w: 3.3, h: 1.15, fontSize: 12, valign: "middle" });
+};
+const fmt = (v, d = 1) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(d);
+const da = D.pairs["DA0.1-PCA20-Linear"];
+if (da) stat(1.45, HEX.tintOrange, `${fmt(da.test.diff_avg)} pp`, "Decision-aware PCA (ours)",
+  `PCA20-Linear: ${da.two_stage.avg.toFixed(1)}% → ${da.e2e.avg.toFixed(1)}% a year when the loadings learn from the portfolio (t = ${da.test.t.toFixed(1)})`, "stat-da");
+const cr = D.costs && D.costs.rows;
+if (cr) {
+  const e = cr["E2E-tc20"], top = cr["MSE-Top"], tuned = cr["MSE-Opt (tuned)"];
+  stat(2.97, HEX.tintBlue, `${e.to.toFixed(0)}%`, "Costs, 20 bps: daily turnover of E2E",
+    `vs ${top.to.toFixed(0)}% for the MSE top decile. Net return ${e.avg.toFixed(1)}% vs ${top.avg.toFixed(1)}% (MSE-Top) and ${tuned.avg.toFixed(1)}% (tuned MSE-Opt, t = ${D.costs.tests["MSE-Opt (tuned)"].t.toFixed(1)})`, "stat-costs");
+}
+const mr = D.meansd && D.meansd.rows;
+if (mr) {
+  const e = mr["E2E mean-SD"], b = mr["MSE-Opt"], ppp = mr["PPP"];
+  stat(4.49, HEX.tintTeal, e.sr.toFixed(2), "Mean–SD, η = 1: Sharpe of E2E",
+    `vs ${b.sr.toFixed(2)} for MSE-Opt` + (ppp ? ` and ${ppp.sr.toFixed(2)} for PPP` : "") + `; volatility ${e.sd.toFixed(1)}% vs ${b.sd.toFixed(1)}% (difference t = ${D.meansd.tests["MSE-Opt"].t.toFixed(1)})`, "stat-meansd");
+}
+const by = (key) => Object.keys(S.models).filter((m) => !m.startsWith("E2E-") && !m.startsWith("DA"))
+  .reduce((a, b) => (S.models[a][key] >= S.models[b][key] ? a : b));
 const bestIC = by("IC"), bestSR = by("H_sr");
-const lin = S.models["Linear"] || S.models["OLS"], linName = S.models["Linear"] ? "Our Linear" : "Our OLS";
-const nn3 = S.models["NN3"];
+box(s, 0.6, 6.05, 12.15, 0.72, HEX.tintTeal, "finding-box", 0.06);
 text(s, [
-  { text: `${bestIC} has the best rank IC (${S.models[bestIC].IC.toFixed(3)}), but ${bestSR} has the best long-only Sharpe ` +
-    `(${S.models[bestSR].H_sr.toFixed(2)}): the paper's argument, in our data.`, options: { breakLine: true } },
-  { text: " ", options: { breakLine: true, fontSize: 6 } },
-  { text: nn3 ? `Unlike the paper, the networks do not beat Linear (NN3: ${nn3.H_sr.toFixed(2)}).` : "", options: { color: HEX.ink2 } },
-], { x: 9.45, y: 2.0, w: 3.1, h: 2.0, fontSize: 13 });
-card(s, 9.2, 4.3, 3.55, 1.4, HEX.tintBlue, "Excluding microcaps", "microcap-card");
-text(s, `${linName}: ${lin.H_ex30_avg.toFixed(1)}% a year (SR ${lin.H_ex30_sr.toFixed(2)}); the paper reports 28.0% (1.44)`,
-  { x: 9.45, y: 4.78, w: 3.1, h: 0.85, fontSize: 13 });
-box(s, 0.6, 5.95, 12.15, 0.8, HEX.tintTeal, "pending-box", 0.06);
-text(s, [
-  { text: "To be added when training finishes: ", options: { bold: true, color: C.text2 } },
-  { text: "E2E versions (paper models and ours), transaction costs 0–40 bps, risk aversion, decision-aware PCA, GMM experts.", options: { color: C.text1 } },
-], { x: 0.85, y: 5.95, w: 11.7, h: 0.8, valign: "middle", fontSize: 14 });
-s.addNotes("Long-only, equal-weight top decile, before costs, market-adjusted against the CSI 500. Final E2E and network results are added after training.");
+  { text: "Accuracy ≠ decision quality: ", options: { bold: true, color: C.text2 } },
+  { text: `among two-stage models ${bestIC} has the best rank IC (${S.models[bestIC].IC.toFixed(3)}) but ${bestSR} the best long-only Sharpe (${S.models[bestSR].H_sr.toFixed(2)}).`, options: { color: C.text1 } },
+], { x: 0.85, y: 6.05, w: 11.7, h: 0.72, valign: "middle", fontSize: 13 });
+s.addNotes("Each E2E model is compared with the two-stage model it starts from, on the same test days, before costs. Differences are tested with Newey-West errors. Costs: NN3 trained with 20 bps costs against the MSE top decile and the validation-tuned MSE-Opt. Mean-SD: eta = 1, before costs.");
 
 pres.writeFile({ fileName: OUT }).then(async () => {
   if (applyTheme) await applyTheme(OUT, THEME);

@@ -32,7 +32,9 @@ plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "axes.edgecol
                      "axes.labelcolor": INK2, "xtick.color": MUTED, "ytick.color": MUTED,
                      "axes.spines.top": False, "axes.spines.right": False, "figure.dpi": 150})
 
+SKIP = ("MSD-", "PPP-", "E2E-tc", "E2E-scratch")  # portfolio-level runs, evaluated in make_decision.py
 names = [m for m in MODELS + [f"E2E-{m}" for m in MODELS] + list(GRIDS) if (PRED / m).exists()]
+names += sorted(d.name for d in PRED.iterdir() if d.is_dir() and d.name not in names and not d.name.startswith(SKIP))
 rows, cum, years = {}, {}, {}
 PLOT_ONLY = "--plot-only" in sys.argv  # redraw from the cached numbers, without recomputing
 if PLOT_ONLY:
@@ -68,14 +70,17 @@ else:
                "years": {m: {str(k): v for k, v in d.items()} for m, d in years.items()}},
               open(ROOT / "report" / "results_summary.json", "w"), indent=1)
     pd.DataFrame(cum).to_parquet(FIG / "cum.parquet")
-order = tab.sort_values("H_sr").index.tolist()
+FIG1 = ["Linear", "NN3", "OLS", "Ridge", "Ridge-rank", "PLS", "LDA", "PCA20-Linear", "PCA20-NN3", "LDA9-NN3",
+        "GMM-Experts", "Size-Experts", "Linear-SVR", "E2E-Linear", "E2E-NN3", "E2E-Ridge", "DA0.1-PCA20-Linear"]
+order = tab.loc[[m for m in FIG1 if m in tab.index]].sort_values("H_sr").index.tolist()
 
 # Figure 1: statistical accuracy (rank IC) vs portfolio quality (top-decile Sharpe), same model order
 fig, axes = plt.subplots(1, 2, figsize=(7.0, 0.8 + 0.27 * len(order)), sharey=True)
 for ax, col, title, fmt in [(axes[0], "IC", "Mean daily rank IC", "{:.3f}"),
                             (axes[1], "H_sr", "Long-only top decile: Sharpe ratio", "{:.2f}")]:
     vals = tab.loc[order, col]
-    ax.barh(range(len(order)), vals, color=SERIES[0], height=0.62)
+    ax.barh(range(len(order)), vals, height=0.62,  # orange: trained end to end
+            color=[SERIES[1] if m.startswith(("E2E-", "DA")) else SERIES[0] for m in order])
     for i, v in enumerate(vals):
         ax.text(v, i, " " + fmt.format(v), va="center", fontsize=8, color=INK2)
     ax.set_title(title, fontsize=9, color=INK, loc="left")
@@ -89,7 +94,7 @@ for ext in ("pdf", "png"):
     fig.savefig(FIG / f"fig_ic_vs_sharpe.{ext}", bbox_inches="tight")
 
 # Figure 2: cumulative top-decile return (sum of daily market-adjusted returns) for up to four models
-pick = [m for m in ["OLS", "NN3", "E2E-NN3", "Ridge-rank", "PLS", "LDA", "PCR"] if m in cum][:4]
+pick = [m for m in ["NN3", "E2E-NN3", "PCA20-Linear", "DA0.1-PCA20-Linear", "OLS"] if m in cum][:4]
 fig, ax = plt.subplots(figsize=(7.0, 2.8))
 ends = {}
 for m, c in zip(pick, SERIES):

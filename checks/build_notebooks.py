@@ -451,7 +451,7 @@ The portfolio problem is a layer of the network; the exact layer and its gradien
 | D | PAPER_ISSUES D1 | NN3 trained from scratch, to check the warm start is not doing the work |
 | E | Table 4 / 5 | mean-SD E2E and PPP across risk aversion η, with and without 20 bps costs |
 
-**Run each section only after its time estimate** (measured on one window first).
+**Run each section only after its time estimate** (measured on one window first). `run_real.py` runs the same calls as a script.
 """),
     ("code", """
 from pathlib import Path
@@ -463,10 +463,10 @@ from mlm.models import MODELS
 PANEL_DIR = Path("D:/ML_Markowitz_data/panel_cn")
 PRED_DIR = Path("D:/ML_Markowitz_data/preds/cn")   # two-stage models (warm starts) and E2E outputs
 windows = rolling_windows("2014-01-01", "2023-12-31")
-ZETA_GRID = (0.05, 0.2, 1.0)   # smoothing, chosen per model and window on validation (PAPER_ISSUES A2)
+ZETA_GRID = (0.05, 0.2, 1.0)   # smoothing, compared on validation in the 2014 windows, then fixed (PAPER_ISSUES A2)
 """),
     ("md", "## A. E2E for the paper's models (Tables 2 and A.3)"),
-    ("code", "run_e2e(MODELS, PANEL_DIR, windows, PRED_DIR, PRED_DIR, E2EConfig(zeta_rel=ZETA_GRID), tag='E2E')"),
+    ("code", "run_e2e(MODELS, PANEL_DIR, windows, PRED_DIR, PRED_DIR, E2EConfig(zeta_rel=ZETA_GRID, zeta_tune_windows=4), tag='E2E')"),
     ("md", "## B. Transaction costs (Table 3): NN3 trained with each cost rate"),
     ("code", """
 for bps in (10, 20, 30, 40):
@@ -474,7 +474,7 @@ for bps in (10, 20, 30, 40):
 """),
     ("md", "## C. E2E for our models, and decision-aware PCA"),
     ("code", """
-run_e2e(["Ridge", "PCA20-NN3", "GMM-Experts"], PANEL_DIR, windows, PRED_DIR, PRED_DIR, E2EConfig(zeta_rel=ZETA_GRID), tag="E2E")
+run_e2e(["Ridge", "PCA20-NN3", "GMM-Experts"], PANEL_DIR, windows, PRED_DIR, PRED_DIR, E2EConfig(zeta_rel=ZETA_GRID, zeta_tune_windows=4), tag="E2E")
 for mu in (0.1, 1.0, 10.0):   # strength of the pull toward the PCA loadings
     run_e2e(["PCA20-Linear", "PCA20-NN3"], PANEL_DIR, windows, PRED_DIR, PRED_DIR, E2EConfig(da_mu=mu), tag=f"DA{mu:g}")
 """),
@@ -482,7 +482,7 @@ for mu in (0.1, 1.0, 10.0):   # strength of the pull toward the PCA loadings
     ("code", "run_e2e(['NN3'], PANEL_DIR, windows[:8], PRED_DIR, PRED_DIR, E2EConfig(warm_start=False), tag='E2E-scratch')"),
     ("md", "## E. Risk aversion (Tables 4 and 5): mean-SD E2E and PPP"),
     ("code", """
-ETAS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0)
+ETAS = (0.1, 0.5, 1.0, 2.5, 10.0)
 for eta in ETAS:
     lr = 1e-4 if eta < 1 else 1e-3   # as in Appendix A.2.2
     for gamma, g in ((0.0, "gross"), (0.002, "net")):
@@ -580,7 +580,7 @@ t3 = pd.DataFrame(rows).set_index(["TCR", "Method"]); t3.to_csv(RES / "table3_al
 """),
     ("md", "## Tables 4 and 5 analogue: risk aversion (mean-SD), E2E vs MSE-Opt vs PPP"),
     ("code", """
-ETAS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0)
+ETAS = (0.1, 0.5, 1.0, 2.5, 10.0)
 daily = lambda tag: pd.concat([pd.read_parquet(f) for f in sorted((PRED_DIR / f"{tag}-NN3").glob("*_daily.parquet"))]).set_index("date").sort_index() \\
     if (PRED_DIR / f"{tag}-NN3").exists() else None
 sig = load_sigma(UNRANKED, nn3)

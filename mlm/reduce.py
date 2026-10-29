@@ -36,12 +36,12 @@ def persistence_cov(df, X, num, device, chunk=250_000):
     order = np.lexsort((df["date"].to_numpy(), df["permno"].to_numpy()))
     perm = df["permno"].to_numpy()[order]
     same = torch.from_numpy(perm[1:] == perm[:-1])
-    Xs = X[torch.from_numpy(order)][:, torch.from_numpy(num)]
+    order, num_t = torch.from_numpy(order), torch.from_numpy(num).to(device)
     S = torch.zeros(len(num), len(num), dtype=torch.float64, device=device)
     n = 0
-    for s in range(0, len(Xs) - 1, chunk):
-        e = min(s + chunk + 1, len(Xs))
-        x = Xs[s:e].to(device).float().mul_(1.0 / Q)
+    for s in range(0, len(order) - 1, chunk):  # gather rows chunk by chunk: a full reordered copy is ~1 GB
+        e = min(s + chunk + 1, len(order))
+        x = X[order[s:e]].to(device)[:, num_t].float().mul_(1.0 / Q)
         d = (x[1:] - x[:-1])[same[s:e - 1].to(device)]
         S += (d.T @ d).double()
         n += len(d)
